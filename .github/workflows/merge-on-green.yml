@@ -33,6 +33,10 @@ jobs:
       github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ${{ fromJSON(inputs.runner) }}
     timeout-minutes: 5
+    # The push and pull_request CI runs often finish together; merge one at a time.
+    concurrency:
+      group: merge-on-green-${{ github.event.workflow_run.head_branch }}
+      cancel-in-progress: false
     steps:
       - uses: actions/create-github-app-token@v2
         id: app-token
@@ -61,4 +65,11 @@ jobs:
             exit 0
           fi
           # --match-head-commit refuses the merge if someone pushed in the meantime.
-          gh pr merge "$num" --squash --delete-branch --match-head-commit "$SHA"
+          if ! gh pr merge "$num" --squash --delete-branch --match-head-commit "$SHA"; then
+            state=$(gh pr view "$num" --json state --jq .state)
+            if [ "$state" = MERGED ]; then
+              echo "PR #$num was merged by another run"
+              exit 0
+            fi
+            exit 1
+          fi
