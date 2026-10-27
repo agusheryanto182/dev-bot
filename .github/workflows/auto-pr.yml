@@ -1,0 +1,57 @@
+name: Auto PR (reusable)
+
+# When the Claude agent pushes a claude/issue-N-* branch: open a PR to the base
+# branch (if none exists). merge-on-green.yml merges it once CI passes.
+# Uses the bot app token: PRs opened with GITHUB_TOKEN don't trigger CI.
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: 'JSON for runs-on, see ci.yml'
+        type: string
+        default: '"ubuntu-latest"'
+      base-branch:
+        type: string
+        default: develop
+    secrets:
+      BOT_APP_ID:
+        required: true
+      BOT_PRIVATE_KEY:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  open-pr:
+    runs-on: ${{ fromJSON(inputs.runner) }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/create-github-app-token@v2
+        id: app-token
+        with:
+          app-id: ${{ secrets.BOT_APP_ID }}
+          private-key: ${{ secrets.BOT_PRIVATE_KEY }}
+
+      - name: Open PR
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          BRANCH: ${{ github.ref_name }}
+          BASE: ${{ inputs.base-branch }}
+        run: |
+          num=$(echo "$BRANCH" | sed -nE 's#^claude/issue-([0-9]+)-.*#\1#p')
+          pr=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number')
+          if [ -n "$pr" ]; then
+            echo "PR #$pr already open"
+            exit 0
+          fi
+          if [ -n "$num" ]; then
+            title=$(gh issue view "$num" --json title --jq .title)
+            body="Closes #$num"
+          else
+            title="$BRANCH"
+            body="Opened automatically from \`$BRANCH\`."
+          fi
+          gh pr create --base "$BASE" --head "$BRANCH" --title "$title" \
+            --body "$body"$'\n\n'"Opened by the Auto PR workflow. Merges automatically once CI passes."

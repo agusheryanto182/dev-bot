@@ -1,0 +1,94 @@
+name: Claude Code (reusable)
+
+# The Claude agent, for issues labelled `claude` and @claude mentions. Only
+# `trigger-user` can start it. The caller passes the issue/comment events.
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: 'JSON for runs-on, see ci.yml'
+        type: string
+        default: '"ubuntu-latest"'
+      trigger-user:
+        description: The only GitHub user who can start the agent
+        type: string
+        default: agusheryanto182
+      model:
+        type: string
+        default: claude-sonnet-5-5
+      max-turns:
+        type: number
+        default: 25
+      timeout-minutes:
+        type: number
+        default: 30
+      base-branch:
+        type: string
+        default: develop
+      allowed-tools:
+        type: string
+        default: Bash(pnpm:*)
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN:
+        required: true
+
+jobs:
+  claude:
+    if: |
+      github.actor == inputs.trigger-user && (
+        (github.event_name == 'issues' && github.event.label.name == 'claude') ||
+        (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
+        (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
+        (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude'))
+      )
+    runs-on: ${{ fromJSON(inputs.runner) }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+
+      # Same stack as CI, so the agent can run integration tests before pushing.
+      - name: Load dev-bot config
+        id: config
+        run: |
+          echo "COMPOSE_PROJECT_NAME=claude-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+          export CI_PORT=$((40000 + GITHUB_RUN_ID % 10000))
+          echo "CI_PORT=$CI_PORT" >> "$GITHUB_ENV"
+          node_version=24
+          [ ! -f .github/dev-bot.sh ] || source .github/dev-bot.sh
+          if declare -F ci_env >/dev/null; then ci_env >> "$GITHUB_ENV"; fi
+          echo "node-version=$node_version" >> "$GITHUB_OUTPUT"
+
+      - name: Start services
+        run: |
+          [ ! -f .github/dev-bot.sh ] || source .github/dev-bot.sh
+          if declare -F setup >/dev/null; then setup; fi
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ steps.config.outputs.node-version }}
+          cache: pnpm
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          label_trigger: claude
+          base_branch: ${{ inputs.base-branch }}
+          claude_args: |
+            --model ${{ inputs.model }}
+            --max-turns ${{ inputs.max-turns }}
+            --allowedTools "${{ inputs.allowed-tools }}"
+
+      - name: Stop services
+        if: always()
+        run: |
+          [ ! -f .github/dev-bot.sh ] || source .github/dev-bot.sh
+          if declare -F teardown >/dev/null; then teardown; fi

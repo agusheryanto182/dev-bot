@@ -1,0 +1,37 @@
+name: Self check
+
+# Lints dev-bot itself. Public repo: GitHub-hosted runners only, never the laptop.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: actionlint
+        run: |
+          docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.7 -no-color .github/workflows/*.yml
+          # Templates, rendered the way setup-repo.sh does it.
+          mkdir -p "$RUNNER_TEMP/rendered/.github/workflows"
+          for f in templates/workflows/*.yml; do
+            sed -e 's#__DEV_BOT__#agusheryanto182/dev-bot#' -e 's#__REF__#v1#' \
+                -e "s#__RUNNER__#\"ubuntu-latest\"#" -e 's#__TRIGGER_USER__#agusheryanto182#' \
+                "$f" > "$RUNNER_TEMP/rendered/.github/workflows/$(basename "$f")"
+          done
+          cd "$RUNNER_TEMP/rendered"
+          docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.7 -no-color .github/workflows/*.yml
+
+      - name: shellcheck
+        run: |
+          docker run --rm -v "$PWD:/mnt" koalaman/shellcheck:v0.10.0 \
+            /mnt/scripts/*.sh
+          docker run --rm -v "$PWD:/mnt" koalaman/shellcheck:v0.10.0 \
+            --shell=bash /mnt/templates/dev-bot.sh

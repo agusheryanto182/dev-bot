@@ -1,0 +1,62 @@
+name: CI (reusable)
+
+# Lint/typecheck/test for a pnpm project. Project specifics (env, services,
+# check commands) come from the caller's .github/dev-bot.sh; see README.md.
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: 'JSON for runs-on: ''["self-hosted","laptop"]'' for private repos, ''"ubuntu-latest"'' for public ones'
+        type: string
+        default: '"ubuntu-latest"'
+      timeout-minutes:
+        type: number
+        default: 15
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    runs-on: ${{ fromJSON(inputs.runner) }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    steps:
+      - uses: actions/checkout@v5
+
+      # A per-run compose project and port, so a job never clashes with stacks
+      # already running on a self-hosted runner. runner-cleanup.sh relies on the
+      # ci-<run id>-<attempt> name.
+      - name: Load dev-bot config
+        id: config
+        run: |
+          echo "COMPOSE_PROJECT_NAME=ci-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+          export CI_PORT=$((40000 + GITHUB_RUN_ID % 10000))
+          echo "CI_PORT=$CI_PORT" >> "$GITHUB_ENV"
+          node_version=24
+          [ ! -f .github/dev-bot.sh ] || source .github/dev-bot.sh
+          if declare -F ci_env >/dev/null; then ci_env >> "$GITHUB_ENV"; fi
+          echo "node-version=$node_version" >> "$GITHUB_OUTPUT"
+
+      - name: Start services
+        run: |
+          [ ! -f .github/dev-bot.sh ] || source .github/dev-bot.sh
+          if declare -F setup >/dev/null; then setup; fi
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ steps.config.outputs.node-version }}
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Check
+        run: |
+          [ ! -f .github/dev-bot.sh ] || source .github/dev-bot.sh
+          if declare -F check >/dev/null; then check; else pnpm test; fi
+
+      - name: Stop services
+        if: always()
+        run: |
+          [ ! -f .github/dev-bot.sh ] || source .github/dev-bot.sh
+          if declare -F teardown >/dev/null; then teardown; fi

@@ -1,0 +1,29 @@
+# Managed by dev-bot (https://github.com/agusheryanto182/dev-bot). Re-run setup-repo.sh to update.
+name: Claude Code
+
+on:
+  issues:
+    types: [labeled]
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
+
+permissions: {}
+
+jobs:
+  claude:
+    uses: __DEV_BOT__/.github/workflows/claude.yml@__REF__
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
+    with:
+      runner: '__RUNNER__'
+      trigger-user: __TRIGGER_USER__
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}

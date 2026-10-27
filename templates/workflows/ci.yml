@@ -1,0 +1,16 @@
+# Managed by dev-bot (https://github.com/agusheryanto182/dev-bot). Re-run setup-repo.sh to update.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, develop, 'claude/**']
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    uses: __DEV_BOT__/.github/workflows/ci.yml@__REF__
+    with:
+      runner: '__RUNNER__'

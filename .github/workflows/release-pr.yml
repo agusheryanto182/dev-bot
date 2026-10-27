@@ -1,0 +1,57 @@
+name: Release PR (reusable)
+
+# Opens (or keeps open) a base -> release branch PR (develop -> main by default).
+# Merging it stays manual on purpose. Uses the bot app token so the PR triggers CI.
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: 'JSON for runs-on, see ci.yml'
+        type: string
+        default: '"ubuntu-latest"'
+      base-branch:
+        type: string
+        default: develop
+      release-branch:
+        type: string
+        default: main
+    secrets:
+      BOT_APP_ID:
+        required: true
+      BOT_PRIVATE_KEY:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  release-pr:
+    runs-on: ${{ fromJSON(inputs.runner) }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/create-github-app-token@v2
+        id: app-token
+        with:
+          app-id: ${{ secrets.BOT_APP_ID }}
+          private-key: ${{ secrets.BOT_PRIVATE_KEY }}
+
+      - name: Open release PR if the base branch is ahead
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          BASE: ${{ inputs.base-branch }}
+          RELEASE: ${{ inputs.release-branch }}
+        run: |
+          ahead=$(gh api "repos/$GH_REPO/compare/$RELEASE...$BASE" --jq .ahead_by)
+          if [ "$ahead" = "0" ]; then
+            echo "$BASE is not ahead of $RELEASE, nothing to do"
+            exit 0
+          fi
+          pr=$(gh pr list --base "$RELEASE" --head "$BASE" --state open --json number --jq '.[0].number')
+          if [ -n "$pr" ]; then
+            echo "Release PR #$pr already open"
+            exit 0
+          fi
+          gh pr create --base "$RELEASE" --head "$BASE" \
+            --title "chore: merge $BASE into $RELEASE ($(date -u +%Y-%m-%d))" \
+            --body "Automated release PR: $ahead commit(s) from $BASE. Review and merge manually."

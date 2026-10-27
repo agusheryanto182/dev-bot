@@ -1,0 +1,176 @@
+name: CI Autofix (reusable)
+
+# When CI fails on a claude/** branch: let Claude find the root cause, explain it
+# on the PR, and push a fix. At most max-attempts per PR, then label needs-human.
+# The caller triggers on `workflow_run` of its CI workflow.
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: 'JSON for runs-on, see ci.yml'
+        type: string
+        default: '"ubuntu-latest"'
+      model:
+        type: string
+        default: claude-sonnet-5-5
+      max-turns:
+        type: number
+        default: 25
+      max-attempts:
+        type: number
+        default: 2
+      timeout-minutes:
+        type: number
+        default: 30
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN:
+        required: true
+
+jobs:
+  autofix:
+    if: |
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.event == 'push' &&
+      startsWith(github.event.workflow_run.head_branch, 'claude/') &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ${{ fromJSON(inputs.runner) }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    concurrency:
+      group: ci-autofix-${{ github.event.workflow_run.head_branch }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      BRANCH: ${{ github.event.workflow_run.head_branch }}
+      RUN_ID: ${{ github.event.workflow_run.id }}
+      MAX_ATTEMPTS: ${{ inputs.max-attempts }}
+      MARKER: '<!-- ci-autofix -->'
+    steps:
+      - name: Find PR and count attempts
+        id: guard
+        run: |
+          pr=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number')
+          if [ -z "$pr" ]; then
+            echo "No open PR for $BRANCH, skipping"
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          attempts=$(gh api "repos/$GH_REPO/issues/$pr/comments" --paginate \
+            --jq "[.[] | select(.body | contains(\"$MARKER\"))] | length" | awk '{s+=$1} END {print s+0}')
+          echo "pr=$pr" >> "$GITHUB_OUTPUT"
+          echo "attempt=$((attempts + 1))" >> "$GITHUB_OUTPUT"
+          if [ "$attempts" -ge "$MAX_ATTEMPTS" ]; then
+            gh label create needs-human --color B60205 \
+              --description "Automation gave up; needs a person" --force
+            gh api -X POST "repos/$GH_REPO/issues/$pr/labels" -f "labels[]=needs-human"
+            gh pr comment "$pr" --body "CI is still failing after $MAX_ATTEMPTS autofix attempts. Stopping automation, so a person needs to look at this. Latest failed run: ${{ github.event.workflow_run.html_url }}"
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "run=true" >> "$GITHUB_OUTPUT"
+
+      - name: Save failed CI log
+        if: steps.guard.outputs.run == 'true'
+        run: |
+          gh run view "$RUN_ID" --log-failed \
+            | sed -E 's/\x1b\[[0-9;]*m//g' | tail -n 400 > "$RUNNER_TEMP/ci-failure.log"
+          wc -l "$RUNNER_TEMP/ci-failure.log"
+
+      # persist-credentials: false so pushes use the Claude App token set up by the
+      # action, not GITHUB_TOKEN (GITHUB_TOKEN pushes don't trigger CI again).
+      - uses: actions/checkout@v5
+        if: steps.guard.outputs.run == 'true'
+        with:
+          ref: ${{ github.event.workflow_run.head_branch }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Load dev-bot config
+        id: config
+        if: steps.guard.outputs.run == 'true'
+        run: |
+          echo "COMPOSE_PROJECT_NAME=autofix-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+          export CI_PORT=$((40000 + GITHUB_RUN_ID % 10000))
+          echo "CI_PORT=$CI_PORT" >> "$GITHUB_ENV"
+          node_version=24
+          [ ! -f .github/dev-bot.sh ] || source .github/dev-bot.sh
+          if declare -F ci_env >/dev/null; then ci_env >> "$GITHUB_ENV"; fi
+          echo "node-version=$node_version" >> "$GITHUB_OUTPUT"
+
+      - name: Start services
+        if: steps.guard.outputs.run == 'true'
+        run: |
+          [ ! -f .github/dev-bot.sh ] || source .github/dev-bot.sh
+          if declare -F setup >/dev/null; then setup; fi
+
+      - uses: pnpm/action-setup@v4
+        if: steps.guard.outputs.run == 'true'
+      - uses: actions/setup-node@v5
+        if: steps.guard.outputs.run == 'true'
+        with:
+          node-version: ${{ steps.config.outputs.node-version }}
+          cache: pnpm
+
+      - uses: anthropics/claude-code-action@v1
+        id: claude
+        if: steps.guard.outputs.run == 'true'
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # The failed CI run was triggered by the agent's own push, so the actor is claude[bot].
+          allowed_bots: claude
+          prompt: |
+            CI failed on branch `${{ env.BRANCH }}` (PR #${{ steps.guard.outputs.pr }}).
+            This is autofix attempt ${{ steps.guard.outputs.attempt }} of ${{ env.MAX_ATTEMPTS }}.
+            The failed CI log is at ${{ runner.temp }}/ci-failure.log.
+            The project's services are running and their env vars are set
+            (see `ci_env` and `setup` in `.github/dev-bot.sh`, if it exists).
+
+            1. Read the log and find the root cause. Read the relevant code; don't guess.
+            2. Write a short report to ${{ runner.temp }}/autofix-report.md:
+               root cause, the fix, and how you verified it. Do not commit this file.
+            3. If the failure comes from infrastructure or `.github/` (which you
+               cannot edit), do not change code. Explain it in the report and stop.
+            4. Otherwise fix it. Never delete, skip or weaken tests or assertions to make
+               them pass. Fix the code, or fix a test only when the test itself is wrong,
+               and say why in the report.
+            5. Run `pnpm install`, then the commands in the `check` function of
+               `.github/dev-bot.sh` (or `pnpm test` if there is none).
+            6. Only when all of them pass: commit with a conventional commit message
+               and `git push origin HEAD`. If they still fail, don't push; say so in the report.
+
+            Follow CLAUDE.md.
+          claude_args: |
+            --model ${{ inputs.model }}
+            --max-turns ${{ inputs.max-turns }}
+            --add-dir ${{ runner.temp }}
+            --allowedTools "Read,Write,Edit,Glob,Grep,Bash(pnpm:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*)"
+
+      - name: Post report on the PR
+        if: always() && steps.guard.outputs.run == 'true'
+        run: |
+          report="$RUNNER_TEMP/autofix-report.md"
+          {
+            # Only count the attempt if the agent actually worked; a setup failure
+            # can't push, so it can't cause a loop.
+            if [ -s "$report" ] || [ "${{ steps.claude.outcome }}" = "success" ]; then
+              echo "$MARKER"
+            fi
+            echo "### CI autofix, attempt ${{ steps.guard.outputs.attempt }}/$MAX_ATTEMPTS"
+            echo
+            echo "Failed run: ${{ github.event.workflow_run.html_url }}"
+            echo
+            if [ -s "$report" ]; then cat "$report"; else echo "The agent did not write a report. See the job log: $GITHUB_SERVER_URL/$GH_REPO/actions/runs/$GITHUB_RUN_ID"; fi
+          } > "$RUNNER_TEMP/comment.md"
+          gh pr comment "${{ steps.guard.outputs.pr }}" --body-file "$RUNNER_TEMP/comment.md"
+
+      - name: Stop services
+        if: always() && steps.guard.outputs.run == 'true'
+        run: |
+          [ ! -f .github/dev-bot.sh ] || source .github/dev-bot.sh
+          if declare -F teardown >/dev/null; then teardown; fi

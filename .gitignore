@@ -1,0 +1,4 @@
+# Never commit credentials to this public repo.
+*.pem
+.env
+.env.*

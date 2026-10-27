@@ -1,0 +1,64 @@
+name: Merge on green (reusable)
+
+# Merges a claude/** PR into the base branch once CI passes on its latest commit.
+# Used instead of GitHub auto-merge, which private repos on GitHub Free don't have.
+# Uses the bot app token, so the merge closes the linked issue and runs CI on the
+# base branch. The caller triggers on `workflow_run` of its CI workflow.
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: 'JSON for runs-on, see ci.yml'
+        type: string
+        default: '"ubuntu-latest"'
+      base-branch:
+        type: string
+        default: develop
+    secrets:
+      BOT_APP_ID:
+        required: true
+      BOT_PRIVATE_KEY:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  merge:
+    # CI runs on push (the PR may not exist yet) and on pull_request (it does),
+    # so either one passing can merge.
+    if: |
+      github.event.workflow_run.conclusion == 'success' &&
+      startsWith(github.event.workflow_run.head_branch, 'claude/') &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ${{ fromJSON(inputs.runner) }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/create-github-app-token@v2
+        id: app-token
+        with:
+          app-id: ${{ secrets.BOT_APP_ID }}
+          private-key: ${{ secrets.BOT_PRIVATE_KEY }}
+
+      - name: Merge the PR if CI passed on its head commit
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+          BASE: ${{ inputs.base-branch }}
+        run: |
+          pr=$(gh pr list --head "$BRANCH" --base "$BASE" --state open \
+            --json number,headRefOid,labels \
+            --jq "[.[] | select(.headRefOid == \"$SHA\")][0]")
+          if [ -z "$pr" ] || [ "$pr" = "null" ]; then
+            echo "No open PR to $BASE with head $SHA, nothing to do"
+            exit 0
+          fi
+          num=$(echo "$pr" | jq -r .number)
+          if echo "$pr" | jq -e '.labels[] | select(.name == "needs-human")' >/dev/null; then
+            echo "PR #$num is labelled needs-human, leaving it"
+            exit 0
+          fi
+          # --match-head-commit refuses the merge if someone pushed in the meantime.
+          gh pr merge "$num" --squash --delete-branch --match-head-commit "$SHA"
