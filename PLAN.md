@@ -173,7 +173,13 @@ Done by me with `sudo`. Claude writes the script `scripts/install-runner.sh`; I 
   - Gotchas: `workflow_run` callers always use the workflow file from the default branch (`develop`). A bootstrap PR's CI fails until `.github/dev-bot.sh` is filled in, which is expected.
   - Not yet tested: `setup-repo.sh` on a brand-new repo (no `develop`, no secrets), and the autofix path through `dev-bot@v1`.
 
+- **Phase 5: done (2026-10-27).** `setup-repo.sh` migrated `agusheryanto182/test-automation` (public → `ubuntu-latest`, bootstrap PR #16; `docker-compose.yml` host ports now overridable via env, defaults unchanged). Issue #17 labelled `claude` → PR #20 opened and merged by `agusheryanto182-bot` → issue closed. Every job ran on GitHub-hosted runners, none on the laptop.
+  - Issue #5 failed first: the agent needed 45 turns (limit 25) and its push got a 403 for `claude[bot]`. The Claude app on my personal account was then set to all repositories and the push worked. **Decision: keep `max-turns: 25` and split big issues** (#5 → #17, #18, #19) instead of raising the limit.
+  - Fixed in `67f2d43`: the push and pull_request CI runs finish together, so two `merge-on-green` runs raced and one failed with "Merge already in progress". Now serialized per branch, and an already-merged PR counts as success.
+  - `setup-repo.sh` can't check GitHub App installs on a personal account (gh's OAuth token gets a 403 on `user/installations`), so it only warns there.
+
 ## Next step
 
-1. Reboot once and check that the runner comes back **online**.
-2. Phase 5: run `setup-repo.sh` on `agusheryanto182/test-automation` (public → `ubuntu-latest`), write its `.github/dev-bot.sh` (Postgres, RabbitMQ, Mailpit via compose), and test the loop with issue #4 there.
+1. Move `v1` to `67f2d43` after review: `git tag v1.0.1 67f2d43 && git tag -f v1 67f2d43 && git push origin v1.0.1 && git push -f origin v1`.
+2. Reboot once and check that the runner comes back **online**.
+3. Not yet tested: `setup-repo.sh` on a brand-new repo, and the autofix path through `dev-bot@v1`.
