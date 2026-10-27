@@ -89,21 +89,20 @@ fi
 log "$repo is $([ "$private" = true ] && echo private || echo public): runner $runner"
 
 # 3. Both GitHub Apps must be installed: Claude to run the agent, the bot for PRs and merges.
+#    Only orgs can be checked: listing a personal account's installations needs a
+#    GitHub App user token, and gh's OAuth token gets a 403.
 if [ "$owner_type" = Organization ]; then
-  apps=$(gh api "orgs/$owner/installations" --jq '.installations[] | "\(.app_slug) \(.repository_selection) \(.id)"')
+  apps=$(gh api "orgs/$owner/installations" --jq '.installations[] | "\(.app_slug) \(.repository_selection)"')
+  for app in "$CLAUDE_APP" "$BOT_APP"; do
+    line=$(awk -v a="$app" '$1 == a' <<<"$apps")
+    [ -n "$line" ] || die "GitHub App '$app' is not installed on $owner. Install it: https://github.com/apps/$app"
+    [ "${line#* }" = all ] \
+      || warn "GitHub App '$app' is installed on selected repos only; make sure $repo is one of them."
+  done
+  log "GitHub Apps $CLAUDE_APP and $BOT_APP are installed on $owner"
 else
-  apps=$(gh api user/installations --jq ".installations[] | select(.account.login == \"$owner\") | \"\(.app_slug) \(.repository_selection) \(.id)\"")
+  warn "can't check GitHub App installs on a personal account. Make sure $CLAUDE_APP and $BOT_APP are installed for $repo: https://github.com/settings/installations"
 fi
-for app in "$CLAUDE_APP" "$BOT_APP"; do
-  line=$(awk -v a="$app" '$1 == a' <<<"$apps")
-  [ -n "$line" ] || die "GitHub App '$app' is not installed on $owner. Install it: https://github.com/apps/$app"
-  read -r _ selection id <<<"$line"
-  if [ "$selection" = selected ]; then
-    gh api "user/installations/$id/repositories" --paginate --jq '.repositories[].full_name' | grep -qx "$repo" \
-      || die "GitHub App '$app' is installed on $owner but not for $repo. Add the repo in the app's settings."
-  fi
-done
-log "GitHub Apps $CLAUDE_APP and $BOT_APP are installed"
 
 # 4. Branches: main for releases, develop as the default branch.
 branch_sha() { gh api "repos/$repo/branches/$1" --jq .commit.sha 2>/dev/null || true; }
