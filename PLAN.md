@@ -182,8 +182,9 @@ Done by me with `sudo`. Claude writes the script `scripts/install-runner.sh`; I 
   - Bug found: the agent got an **empty CI log**, because `gh run view --log-failed` returns nothing for jobs from a reusable workflow. It reproduced the failure itself. Fixed in the next commit by fetching each failed job's log through the API.
   - `merge-on-green` also stops cleanly while the other CI run's required check is still pending (public repos with branch protection), in `c1c3502` (`v1.0.2`).
 
+- **needs-human tested (2026-10-27)** in `dev-bot-sandbox` (issue #8, PR #9), with `dev-bot@v1.0.3`: the branch made `check()` in `.github/dev-bot.sh` require a missing secret. Both autofix attempts read the (now non-empty) CI log, named the cause, changed no code and pushed nothing. On the 3rd failure the PR got `needs-human` plus a "stopping automation" comment. After CI was fixed by hand and went green, `merge-on-green` left the labelled PR open.
+
 ## Next step
 
-1. Move `v1` to the autofix log fix after review (`v1.0.3`).
 2. Reboot once and check that the runner comes back **online**.
-3. Not yet tested: `setup-repo.sh` on a brand-new repo, and the `needs-human` path after 2 failed autofix attempts.
+3. Not yet tested: `setup-repo.sh` on a brand-new repo.
