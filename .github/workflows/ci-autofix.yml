@@ -77,10 +77,17 @@ jobs:
 
       - name: Save failed CI log
         if: steps.guard.outputs.run == 'true'
+        # `gh run view --log-failed` is empty when the job comes from a reusable
+        # workflow, so fetch each failed job's log through the API.
         run: |
-          gh run view "$RUN_ID" --log-failed \
-            | sed -E 's/\x1b\[[0-9;]*m//g' | tail -n 400 > "$RUNNER_TEMP/ci-failure.log"
-          wc -l "$RUNNER_TEMP/ci-failure.log"
+          log="$RUNNER_TEMP/ci-failure.log"
+          : > "$log"
+          for job in $(gh api "repos/$GH_REPO/actions/runs/$RUN_ID/jobs" --paginate \
+              --jq '.jobs[] | select(.conclusion == "failure") | .id'); do
+            gh api "repos/$GH_REPO/actions/jobs/$job/logs" \
+              | sed -E 's/\x1b\[[0-9;]*m//g' | tail -n 400 >> "$log"
+          done
+          wc -l "$log"
 
       # persist-credentials: false so pushes use the Claude App token set up by the
       # action, not GITHUB_TOKEN (GITHUB_TOKEN pushes don't trigger CI again).
