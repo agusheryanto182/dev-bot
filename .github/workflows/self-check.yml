@@ -31,7 +31,6 @@ jobs:
 
       - name: shellcheck
         run: |
-          docker run --rm -v "$PWD:/mnt" koalaman/shellcheck:v0.10.0 \
-            /mnt/scripts/*.sh
-          docker run --rm -v "$PWD:/mnt" koalaman/shellcheck:v0.10.0 \
-            --shell=bash /mnt/templates/dev-bot.sh
+          # Relative paths, so the host shell expands the glob.
+          docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:v0.10.0 scripts/*.sh
+          docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:v0.10.0 --shell=bash templates/dev-bot.sh
