@@ -71,5 +71,13 @@ jobs:
               echo "PR #$num was merged by another run"
               exit 0
             fi
+            # Branch protection blocks the merge while the other CI run (push vs
+            # pull_request) is still going; its completion triggers another try.
+            pending=$(gh pr view "$num" --json statusCheckRollup \
+              --jq '[.statusCheckRollup[] | select((.status // "COMPLETED") != "COMPLETED")] | length')
+            if [ "$pending" -gt 0 ]; then
+              echo "PR #$num still has $pending check(s) running; the next CI completion will merge it"
+              exit 0
+            fi
             exit 1
           fi
