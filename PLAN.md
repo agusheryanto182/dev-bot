@@ -178,8 +178,12 @@ Done by me with `sudo`. Claude writes the script `scripts/install-runner.sh`; I 
   - Fixed in `67f2d43`: the push and pull_request CI runs finish together, so two `merge-on-green` runs raced and one failed with "Merge already in progress". Now serialized per branch, and an already-merged PR counts as success.
   - `setup-repo.sh` can't check GitHub App installs on a personal account (gh's OAuth token gets a 403 on `user/installations`), so it only warns there.
 
+- **Autofix tested (2026-10-27)** in `dev-bot-sandbox` through `dev-bot@v1`: a hand-pushed commit on `claude/issue-6-autofix-test` had a real bug (`count(*)` comes back from node-postgres as a string). CI failed → `ci-autofix` found the root cause, fixed `src/notes.ts` with `Number(...)` without touching the test, posted the report on PR #7 (attempt 1/2) → CI green → merged by the bot → issue #6 closed. All on the laptop.
+  - Bug found: the agent got an **empty CI log**, because `gh run view --log-failed` returns nothing for jobs from a reusable workflow. It reproduced the failure itself. Fixed in the next commit by fetching each failed job's log through the API.
+  - `merge-on-green` also stops cleanly while the other CI run's required check is still pending (public repos with branch protection), in `c1c3502` (`v1.0.2`).
+
 ## Next step
 
-1. Move `v1` to `67f2d43` after review: `git tag v1.0.1 67f2d43 && git tag -f v1 67f2d43 && git push origin v1.0.1 && git push -f origin v1`.
+1. Move `v1` to the autofix log fix after review (`v1.0.3`).
 2. Reboot once and check that the runner comes back **online**.
-3. Not yet tested: `setup-repo.sh` on a brand-new repo, and the autofix path through `dev-bot@v1`.
+3. Not yet tested: `setup-repo.sh` on a brand-new repo, and the `needs-human` path after 2 failed autofix attempts.
