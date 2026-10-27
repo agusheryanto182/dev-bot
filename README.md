@@ -58,6 +58,15 @@ teardown() { docker compose down -v --remove-orphans; }    # always runs
 
 `CI_PORT` (40000–49999) and `COMPOSE_PROJECT_NAME` are unique per run, so jobs don't clash with stacks already running on the laptop. Map your compose ports to them.
 
+## Status
+
+```
+./scripts/status.sh                  # every repo with .github/dev-bot.sh
+./scripts/status.sh owner/repo ...   # just these, faster
+```
+
+Read-only, with your own `gh` login: laptop runner state, agent runs in progress, open PRs (CI, autofix attempts, `needs-human`), issues waiting for the agent, and failed runs in the last 24 hours (`--since <hours>`). Nothing leaves the machine.
+
 ## Laptop runner
 
 - `sudo ./scripts/install-runner.sh --org <org>` with a registration token on stdin (see the script header): dedicated `ghrunner` user without sudo, org-level runner, systemd service, daily cleanup timer.
