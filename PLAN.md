@@ -186,5 +186,5 @@ Done by me with `sudo`. Claude writes the script `scripts/install-runner.sh`; I 
 
 ## Next step
 
-2. Reboot once and check that the runner comes back **online**.
-3. Not yet tested: `setup-repo.sh` on a brand-new repo.
+1. Reboot once and check that the runner comes back **online**.
+2. Not yet tested: `setup-repo.sh` on a brand-new repo.
