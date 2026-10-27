@@ -169,8 +169,11 @@ Done by me with `sudo`. Claude writes the script `scripts/install-runner.sh`; I 
 
 - **Phase 3: done (2026-10-27)**, once the timer is installed. Per-run compose project names, per-run ports (`40000 + run_id % 10000`) and `down -v` are in the sandbox workflows. Tested: sandbox CI passed while my own stack ran on port 55432, and that stack was untouched. `runner-cleanup.sh` tested against a fake stale `ci-999-1` stack and a personal `mystack`: only the CI stack and the old checkout were removed.
 
+- **Phase 4: done (2026-10-27).** `agusheryanto182/dev-bot` is public with secret scanning and push protection, `self-check` green, tagged `v1.0.0` and `v1`. `setup-repo.sh` migrated `dev-bot-sandbox` (bootstrap PR #3, merged by hand). Then issue #4 labelled `claude` → PR #5 opened and merged by `agusheryanto182-bot` → issue closed, branch deleted, CI green on `develop`. All 5 jobs that ran used `bookworm-laptop` via `dev-bot@v1`; nothing left behind.
+  - Gotchas: `workflow_run` callers always use the workflow file from the default branch (`develop`). A bootstrap PR's CI fails until `.github/dev-bot.sh` is filled in, which is expected.
+  - Not yet tested: `setup-repo.sh` on a brand-new repo (no `develop`, no secrets), and the autofix path through `dev-bot@v1`.
+
 ## Next step
 
-1. `sudo ./scripts/install-runner.sh --org agusheryanto182-lab` (no token needed) to install the cleanup timer, then `systemctl list-timers dev-bot-runner-cleanup.timer`.
-2. Reboot once and check that the runner comes back **online**.
-3. Phase 4: build `dev-bot` with reusable workflows, starting from the sandbox workflows.
+1. Reboot once and check that the runner comes back **online**.
+2. Phase 5: run `setup-repo.sh` on `agusheryanto182/test-automation` (public → `ubuntu-latest`), write its `.github/dev-bot.sh` (Postgres, RabbitMQ, Mailpit via compose), and test the loop with issue #4 there.
